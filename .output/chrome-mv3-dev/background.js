@@ -19,8 +19,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       __publicField(this, "countdownStartTime", 0);
       __publicField(this, "countdownDuration", 0);
       __publicField(this, "randomRange", 5);
-      // 新增：时间百分比属性
-      __publicField(this, "timePercentage", 100);
+      // 删除：时间百分比属性
       __publicField(this, "loopInterval", null);
       __publicField(this, "countdownInterval", null);
       __publicField(this, "progressInterval", null);
@@ -85,7 +84,6 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       this.currentIndex = data.currentIndex || 0;
       this.randomRange = data.randomRange || 5;
       this.loopCount = data.loopCount || 0;
-      this.timePercentage = data.timePercentage || 100;
       this.currentLoopCount = 0;
       if (this.videoData.length === 0) {
         return { success: false, message: "没有视频数据" };
@@ -111,11 +109,10 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       const currentVideo = this.videoData[this.currentIndex];
       const specifiedPlayTime = (currentVideo == null ? void 0 : currentVideo.videoTime) || 0;
       if (specifiedPlayTime > 0) {
-        const adjustedPlayTime = Math.floor(specifiedPlayTime * (this.timePercentage / 100));
-        const remainingSpecifiedTime = adjustedPlayTime - currentTime;
-        console.log(`[DEBUG] Background 指定播放时长: ${specifiedPlayTime}秒, 调整后播放时长: ${adjustedPlayTime}秒 (${this.timePercentage}%), 剩余指定时长: ${remainingSpecifiedTime}秒`);
+        const remainingSpecifiedTime = specifiedPlayTime - currentTime;
+        console.log(`[DEBUG] Background 指定播放时长: ${specifiedPlayTime}秒, 剩余指定时长: ${remainingSpecifiedTime}秒`);
         if (remainingSpecifiedTime <= 0) {
-          console.log(`[DEBUG] Background 达到调整后的指定播放时长，直接跳转到下一个视频`);
+          console.log(`[DEBUG] Background 达到指定播放时长，直接跳转到下一个视频`);
           if (this.progressInterval) {
             clearInterval(this.progressInterval);
             this.progressInterval = null;
@@ -124,24 +121,19 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
           return;
         }
       }
-      let randomWaitTime = 1;
-      if (this.randomRange > 0) {
-        randomWaitTime = Math.max(1, Math.floor(Math.random() * this.randomRange) + 1);
-      }
-      const adjustedRandomWaitTime = Math.floor(randomWaitTime * (this.timePercentage / 100));
+      const waitTime = this.randomRange || 1;
       const minPlayTime = 5;
       const actualRemainingTime = Math.max(remainingSeconds, minPlayTime);
-      const adjustedRemainingTime = Math.floor(actualRemainingTime * (this.timePercentage / 100));
-      console.log(`[DEBUG] Background 原始剩余时间: ${remainingSeconds}秒, 调整后剩余时间: ${adjustedRemainingTime}秒, 原始随机等待: ${randomWaitTime}秒, 调整后随机等待: ${adjustedRandomWaitTime}秒, 时间百分比: ${this.timePercentage}%`);
-      if (adjustedRemainingTime - adjustedRandomWaitTime <= 0) {
-        console.log(`[DEBUG] Background 视频即将结束（按百分比计算），准备跳转到下一个视频`);
+      console.log(`[DEBUG] Background 剩余时间: ${remainingSeconds}秒, 等待时间: ${waitTime}秒`);
+      if (actualRemainingTime - waitTime <= 0) {
+        console.log(`[DEBUG] Background 视频即将结束，准备跳转到下一个视频`);
         if (this.progressInterval) {
           clearInterval(this.progressInterval);
           this.progressInterval = null;
         }
         this.moveToNextVideo();
       } else {
-        this.countdownTime = Math.max(0, adjustedRemainingTime - adjustedRandomWaitTime);
+        this.countdownTime = Math.max(0, actualRemainingTime - waitTime);
         this.saveState();
       }
     }
@@ -157,8 +149,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         countdownStartTime: this.countdownStartTime,
         countdownDuration: this.countdownDuration,
         randomRange: this.randomRange,
-        timePercentage: this.timePercentage,
-        // 新增时间百分比状态
+        // 删除：timePercentage
         loopCount: this.loopCount,
         currentLoopCount: this.currentLoopCount
       };
@@ -172,8 +163,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         currentIndex: this.currentIndex,
         isLooping: this.isLooping,
         randomRange: this.randomRange,
-        timePercentage: this.timePercentage,
-        // 新增时间百分比状态
+        // 删除：timePercentage
         countdownStartTime: this.countdownStartTime,
         countdownDuration: this.countdownDuration,
         loopCount: this.loopCount,
@@ -199,7 +189,6 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
           this.currentIndex = state.currentIndex || 0;
           this.isLooping = state.isLooping || false;
           this.randomRange = state.randomRange || 5;
-          this.timePercentage = state.timePercentage || 100;
           this.countdownStartTime = state.countdownStartTime || 0;
           this.countdownDuration = state.countdownDuration || 0;
           this.loopCount = state.loopCount || 0;

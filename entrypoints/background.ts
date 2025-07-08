@@ -12,8 +12,7 @@ class LoopManager {
   private countdownStartTime: number = 0;
   private countdownDuration: number = 0;
   private randomRange: number = 5;
-  // 新增：时间百分比属性
-  private timePercentage: number = 100;
+  // 删除：时间百分比属性
   private loopInterval: NodeJS.Timeout | null = null;
   private countdownInterval: NodeJS.Timeout | null = null;
   private progressInterval: NodeJS.Timeout | null = null;
@@ -92,7 +91,7 @@ class LoopManager {
     this.currentIndex = data.currentIndex || 0;
     this.randomRange = data.randomRange || 5;
     this.loopCount = data.loopCount || 0;
-    this.timePercentage = data.timePercentage || 100; // 新增时间百分比
+    // 删除：timePercentage
     this.currentLoopCount = 0;
     
     if (this.videoData.length === 0) {
@@ -130,15 +129,13 @@ class LoopManager {
     const currentVideo = this.videoData[this.currentIndex];
     const specifiedPlayTime = currentVideo?.videoTime || 0;
     
-    // 新增判断：如果设置了指定播放时长，检查是否达到指定时长
+    // 如果设置了指定播放时长，检查是否达到指定时长
     if (specifiedPlayTime > 0) {
-      // 应用时间百分比到指定播放时长
-      const adjustedPlayTime = Math.floor(specifiedPlayTime * (this.timePercentage / 100));
-      const remainingSpecifiedTime = adjustedPlayTime - currentTime;
-      console.log(`[DEBUG] Background 指定播放时长: ${specifiedPlayTime}秒, 调整后播放时长: ${adjustedPlayTime}秒 (${this.timePercentage}%), 剩余指定时长: ${remainingSpecifiedTime}秒`);
+      const remainingSpecifiedTime = specifiedPlayTime - currentTime;
+      console.log(`[DEBUG] Background 指定播放时长: ${specifiedPlayTime}秒, 剩余指定时长: ${remainingSpecifiedTime}秒`);
       
       if (remainingSpecifiedTime <= 0) {
-        console.log(`[DEBUG] Background 达到调整后的指定播放时长，直接跳转到下一个视频`);
+        console.log(`[DEBUG] Background 达到指定播放时长，直接跳转到下一个视频`);
         
         // 清除进度监控
         if (this.progressInterval) {
@@ -152,27 +149,18 @@ class LoopManager {
       }
     }
 
-    // 计算随机等待时间，确保至少等待1秒
-    let randomWaitTime = 1; // 最小等待时间
-    if (this.randomRange > 0) {
-      randomWaitTime = Math.max(1, Math.floor(Math.random() * this.randomRange) + 1);
-    }
-
-    // 应用时间百分比到随机等待时间
-    const adjustedRandomWaitTime = Math.floor(randomWaitTime * (this.timePercentage / 100));
+    // 使用固定等待时间（不再是随机）
+    const waitTime = this.randomRange || 1; // 最小等待时间1秒
     
     // 添加最短间隔保护：至少播放5秒
     const minPlayTime = 5;
     const actualRemainingTime = Math.max(remainingSeconds, minPlayTime);
-    
-    // 应用时间百分比到实际剩余时间
-    const adjustedRemainingTime = Math.floor(actualRemainingTime * (this.timePercentage / 100));
 
-    console.log(`[DEBUG] Background 原始剩余时间: ${remainingSeconds}秒, 调整后剩余时间: ${adjustedRemainingTime}秒, 原始随机等待: ${randomWaitTime}秒, 调整后随机等待: ${adjustedRandomWaitTime}秒, 时间百分比: ${this.timePercentage}%`);
+    console.log(`[DEBUG] Background 剩余时间: ${remainingSeconds}秒, 等待时间: ${waitTime}秒`);
 
-    // 判断是否应该跳转：调整后的剩余时间 - 调整后的随机等待时间 <= 0
-    if (adjustedRemainingTime - adjustedRandomWaitTime <= 0) {
-      console.log(`[DEBUG] Background 视频即将结束（按百分比计算），准备跳转到下一个视频`);
+    // 判断是否应该跳转：剩余时间 - 等待时间 <= 0
+    if (actualRemainingTime - waitTime <= 0) {
+      console.log(`[DEBUG] Background 视频即将结束，准备跳转到下一个视频`);
 
       // 清除进度监控
       if (this.progressInterval) {
@@ -183,8 +171,8 @@ class LoopManager {
       // 跳转到下一个视频
       this.moveToNextVideo();
     } else {
-      // 更新倒计时显示（使用调整后的时间）
-      this.countdownTime = Math.max(0, adjustedRemainingTime - adjustedRandomWaitTime);
+      // 更新倒计时显示
+      this.countdownTime = Math.max(0, actualRemainingTime - waitTime);
       this.saveState();
     }
   }
@@ -201,7 +189,7 @@ class LoopManager {
       countdownStartTime: this.countdownStartTime,
       countdownDuration: this.countdownDuration,
       randomRange: this.randomRange,
-      timePercentage: this.timePercentage, // 新增时间百分比状态
+      // 删除：timePercentage
       loopCount: this.loopCount,
       currentLoopCount: this.currentLoopCount
     };
@@ -216,7 +204,7 @@ class LoopManager {
       currentIndex: this.currentIndex,
       isLooping: this.isLooping,
       randomRange: this.randomRange,
-      timePercentage: this.timePercentage, // 新增时间百分比状态
+      // 删除：timePercentage
       countdownStartTime: this.countdownStartTime,
       countdownDuration: this.countdownDuration,
       loopCount: this.loopCount,
@@ -244,7 +232,7 @@ class LoopManager {
         this.currentIndex = state.currentIndex || 0;
         this.isLooping = state.isLooping || false;
         this.randomRange = state.randomRange || 5;
-        this.timePercentage = state.timePercentage || 100; // 新增时间百分比状态恢复
+        // 删除：timePercentage
         this.countdownStartTime = state.countdownStartTime || 0;
         this.countdownDuration = state.countdownDuration || 0;
         this.loopCount = state.loopCount || 0;

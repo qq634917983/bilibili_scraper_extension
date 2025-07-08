@@ -26,7 +26,7 @@ export interface LoopState {
   currentIndex: number;
   isLooping: boolean;
   randomRange: number;
-  timePercentage: number;
+  // 删除：timePercentage: number;
 }
 
 /**

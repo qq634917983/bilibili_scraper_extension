@@ -1,21 +1,24 @@
+/**
+ * 视频数据管理组合式函数
+ * 负责视频数据的获取、更新、状态管理
+ */
 import { ref, computed } from 'vue';
 import type { VideoData, CurrentVideoInfo } from '../types';
 import { sendMessage, sendMessageToTab } from '../utils/messaging';
 
-/**
- * 视频数据管理组合式函数
- */
 export function useVideoData() {
+  // 响应式数据
   const videoData = ref<VideoData[]>([]);
   const currentIndex = ref(0);
-  const currentVideoInfo = ref<CurrentVideoInfo | null>(null);
+  const isLooping = ref(false);
   const isRefreshing = ref(false);
+  const currentVideoInfo = ref<CurrentVideoInfo | null>(null);
   const outputMessage = ref('✅ 扩展已加载，请在Bilibili视频页面上使用');
 
   /**
-   * 处理刷新数据
+   * 刷新视频数据
    */
-  const handleRefreshData = async () => {
+  const refreshData = async (): Promise<void> => {
     console.log('[SUCCESS] 刷新数据按钮被点击 - 初始化插件');
 
     isRefreshing.value = true;
@@ -41,8 +44,19 @@ export function useVideoData() {
             originalIndex: index
           }));
 
+          // 更新background中的数据
+          await sendMessage({
+            type: 'UPDATE_DATA',
+            data: {
+              videoData: dataWithOriginalIndex,
+              currentIndex: 0,
+              isLooping: false
+            }
+          });
+
           videoData.value = dataWithOriginalIndex;
           currentIndex.value = 0;
+          isLooping.value = false;
 
           outputMessage.value = `✅ 成功获取 ${dataWithOriginalIndex.length} 个视频数据`;
         }
@@ -58,9 +72,9 @@ export function useVideoData() {
   };
 
   /**
-   * 处理乱序排列
+   * 乱序排列视频数据
    */
-  const handleShuffleData = async () => {
+  const shuffleData = async (): Promise<void> => {
     if (videoData.value.length === 0) {
       outputMessage.value = '❌ 没有可乱序的数据，请先刷新数据';
       return;
@@ -76,6 +90,7 @@ export function useVideoData() {
         if (stateResponse && stateResponse.videoData) {
           videoData.value = stateResponse.videoData;
           currentIndex.value = stateResponse.currentIndex || 0;
+          isLooping.value = stateResponse.isLooping || false;
           
           outputMessage.value = '✅ 乱序排列完成';
         }
@@ -87,9 +102,25 @@ export function useVideoData() {
   };
 
   /**
+   * 加载状态
+   */
+  const loadState = async (): Promise<void> => {
+    try {
+      const response = await sendMessage({ type: 'GET_STATE' });
+      if (response) {
+        videoData.value = response.videoData || [];
+        currentIndex.value = response.currentIndex || 0;
+        isLooping.value = response.isLooping || false;
+      }
+    } catch (error) {
+      console.error('[ERROR] 加载状态失败:', error);
+    }
+  };
+
+  /**
    * 跳转到指定视频
    */
-  const jumpToVideo = (index: number) => {
+  const jumpToVideo = (index: number): void => {
     if (index < 0 || index >= videoData.value.length) return;
 
     const video = videoData.value[index];
@@ -107,14 +138,39 @@ export function useVideoData() {
     });
   };
 
+  /**
+   * 更新视频播放时长
+   */
+  const updateVideoTime = async (index: number, totalSeconds: number): Promise<void> => {
+    if (index >= 0 && index < videoData.value.length) {
+      videoData.value[index].videoTime = totalSeconds;
+
+      // 更新background中的数据
+      await sendMessage({
+        type: 'UPDATE_DATA',
+        data: {
+          videoData: videoData.value,
+          currentIndex: currentIndex.value,
+          isLooping: isLooping.value
+        }
+      });
+    }
+  };
+
   return {
+    // 响应式数据
     videoData,
     currentIndex,
-    currentVideoInfo,
+    isLooping,
     isRefreshing,
+    currentVideoInfo,
     outputMessage,
-    handleRefreshData,
-    handleShuffleData,
-    jumpToVideo
+    
+    // 方法
+    refreshData,
+    shuffleData,
+    loadState,
+    jumpToVideo,
+    updateVideoTime
   };
 }
