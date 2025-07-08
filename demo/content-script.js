@@ -67,8 +67,11 @@ class VideoDataScraper {
         // 获取播放列表
         const playlist = await this.getPlaylist();
         
-        // 合并数据
-        const allVideos = [videoInfo, ...playlist];
+        // 过滤掉播放列表中与当前视频重复的项
+        const filteredPlaylist = playlist.filter(video => video.id !== videoInfo.id);
+        
+        // 合并数据（当前视频放在第一位）
+        const allVideos = [videoInfo, ...filteredPlaylist];
         
         console.log(`[DEBUG] Content script 抓取完成，共 ${allVideos.length} 个视频`);
         return allVideos;

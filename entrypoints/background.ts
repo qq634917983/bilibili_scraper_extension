@@ -12,6 +12,8 @@ class LoopManager {
   private countdownStartTime: number = 0;
   private countdownDuration: number = 0;
   private randomRange: number = 5;
+  // 新增：时间百分比属性
+  private timePercentage: number = 100;
   private loopInterval: NodeJS.Timeout | null = null;
   private countdownInterval: NodeJS.Timeout | null = null;
   private progressInterval: NodeJS.Timeout | null = null;
@@ -81,92 +83,190 @@ class LoopManager {
   }
 
   /**
-   * 开始循环播放
+   * 开始循环播放 - 支持时间百分比
    */
-  private startLoop(data: any): void {
-    console.log('[DEBUG] Background 开始循环播放');
-
-    if (data) {
-      this.videoData = data.videoData || [];
-      this.currentIndex = data.currentIndex || 0;
-      this.randomRange = data.randomRange || 5;
-      this.loopCount = data.loopCount || 0;
-      this.currentLoopCount = 0;
-    }
-
-    if (this.videoData.length === 0) {
-      console.log('[ERROR] 无视频数据可循环');
-      return;
-    }
-
-    this.isLooping = true;
-    this.currentIndex = 0;
-
-    this.clearTimers();
-    this.playVideo();
-    this.saveState();
-  }
-
-  /**
-   * 停止循环播放
-   */
-  private stopLoop(): void {
-    console.log('[DEBUG] Background 停止循环播放');
-
-    this.isLooping = false;
-    this.clearTimers();
-    this.countdownTime = 0;
-    this.countdownStartTime = 0;
-    this.countdownDuration = 0;
-
-    this.saveState();
-  }
-
-  /**
-   * 更新视频数据
-   */
-  private updateVideoData(data: any): void {
+  private startLoop(data: any): any {
+    console.log('[DEBUG] Background 开始循环播放，数据:', data);
+    
     this.videoData = data.videoData || [];
     this.currentIndex = data.currentIndex || 0;
-    this.isLooping = data.isLooping || false;
     this.randomRange = data.randomRange || 5;
-
-    console.log('[DEBUG] Background 更新视频数据，数量:', this.videoData.length);
+    this.loopCount = data.loopCount || 0;
+    this.timePercentage = data.timePercentage || 100; // 新增时间百分比
+    this.currentLoopCount = 0;
+    
+    if (this.videoData.length === 0) {
+      return { success: false, message: '没有视频数据' };
+    }
+    
+    this.isLooping = true;
     this.saveState();
+    
+    console.log(`[DEBUG] Background 循环参数: 随机范围=${this.randomRange}秒, 循环次数=${this.loopCount}, 时间百分比=${this.timePercentage}%`);
+    
+    // 开始播放当前视频
+    this.playVideo();
+    
+    return { success: true, message: '循环播放已开始' };
   }
 
   /**
-   * 乱序排列视频数据
+   * 处理视频进度逻辑（修改版 - 支持时间百分比）
    */
-  private shuffleVideoData(): void {
-    if (this.videoData.length === 0) {
-      console.log('[ERROR] 无视频数据可乱序');
+  private async processVideoProgress(videoInfo: any): Promise<void> {
+    const remainingSeconds = videoInfo.remainingSeconds || 0;
+    const currentTime = videoInfo.currentTime || 0;
+    const totalTime = videoInfo.totalTime || 0;
+
+    console.log(`[DEBUG] Background 视频信息: 当前时间=${currentTime}秒, 总时长=${totalTime}秒, 剩余时间=${remainingSeconds}秒`);
+
+    // 检查数据有效性
+    if (totalTime === 0) {
+      console.log('[DEBUG] Background 视频总时长为0，跳过检查');
       return;
     }
 
-    console.log('[DEBUG] Background 开始乱序排列');
-
-    // 使用Fisher-Yates洗牌算法
-    const shuffledData = [...this.videoData];
-    for (let i = shuffledData.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [shuffledData[i], shuffledData[j]] = [shuffledData[j], shuffledData[i]];
+    // 获取当前视频的指定播放时长
+    const currentVideo = this.videoData[this.currentIndex];
+    const specifiedPlayTime = currentVideo?.videoTime || 0;
+    
+    // 新增判断：如果设置了指定播放时长，检查是否达到指定时长
+    if (specifiedPlayTime > 0) {
+      // 应用时间百分比到指定播放时长
+      const adjustedPlayTime = Math.floor(specifiedPlayTime * (this.timePercentage / 100));
+      const remainingSpecifiedTime = adjustedPlayTime - currentTime;
+      console.log(`[DEBUG] Background 指定播放时长: ${specifiedPlayTime}秒, 调整后播放时长: ${adjustedPlayTime}秒 (${this.timePercentage}%), 剩余指定时长: ${remainingSpecifiedTime}秒`);
+      
+      if (remainingSpecifiedTime <= 0) {
+        console.log(`[DEBUG] Background 达到调整后的指定播放时长，直接跳转到下一个视频`);
+        
+        // 清除进度监控
+        if (this.progressInterval) {
+          clearInterval(this.progressInterval);
+          this.progressInterval = null;
+        }
+        
+        // 跳转到下一个视频
+        this.moveToNextVideo();
+        return;
+      }
     }
 
-    this.videoData = shuffledData;
-
-    // 如果正在循环，重置索引并重新开始
-    if (this.isLooping) {
-      this.currentIndex = 0;
-      this.clearTimers();
-
-      setTimeout(() => {
-        this.playVideo();
-      }, 1000);
+    // 计算随机等待时间，确保至少等待1秒
+    let randomWaitTime = 1; // 最小等待时间
+    if (this.randomRange > 0) {
+      randomWaitTime = Math.max(1, Math.floor(Math.random() * this.randomRange) + 1);
     }
 
-    console.log('[DEBUG] Background 乱序排列完成');
-    this.saveState();
+    // 应用时间百分比到随机等待时间
+    const adjustedRandomWaitTime = Math.floor(randomWaitTime * (this.timePercentage / 100));
+    
+    // 添加最短间隔保护：至少播放5秒
+    const minPlayTime = 5;
+    const actualRemainingTime = Math.max(remainingSeconds, minPlayTime);
+    
+    // 应用时间百分比到实际剩余时间
+    const adjustedRemainingTime = Math.floor(actualRemainingTime * (this.timePercentage / 100));
+
+    console.log(`[DEBUG] Background 原始剩余时间: ${remainingSeconds}秒, 调整后剩余时间: ${adjustedRemainingTime}秒, 原始随机等待: ${randomWaitTime}秒, 调整后随机等待: ${adjustedRandomWaitTime}秒, 时间百分比: ${this.timePercentage}%`);
+
+    // 判断是否应该跳转：调整后的剩余时间 - 调整后的随机等待时间 <= 0
+    if (adjustedRemainingTime - adjustedRandomWaitTime <= 0) {
+      console.log(`[DEBUG] Background 视频即将结束（按百分比计算），准备跳转到下一个视频`);
+
+      // 清除进度监控
+      if (this.progressInterval) {
+        clearInterval(this.progressInterval);
+        this.progressInterval = null;
+      }
+
+      // 跳转到下一个视频
+      this.moveToNextVideo();
+    } else {
+      // 更新倒计时显示（使用调整后的时间）
+      this.countdownTime = Math.max(0, adjustedRemainingTime - adjustedRandomWaitTime);
+      this.saveState();
+    }
+  }
+
+  /**
+   * 获取当前状态 - 包含时间百分比
+   */
+  private getState(): any {
+    return {
+      videoData: this.videoData,
+      currentIndex: this.currentIndex,
+      isLooping: this.isLooping,
+      countdownTime: this.countdownTime,
+      countdownStartTime: this.countdownStartTime,
+      countdownDuration: this.countdownDuration,
+      randomRange: this.randomRange,
+      timePercentage: this.timePercentage, // 新增时间百分比状态
+      loopCount: this.loopCount,
+      currentLoopCount: this.currentLoopCount
+    };
+  }
+
+  /**
+   * 保存状态到storage - 包含时间百分比
+   */
+  private async saveState(): Promise<void> {
+    const state = {
+      videoData: this.videoData,
+      currentIndex: this.currentIndex,
+      isLooping: this.isLooping,
+      randomRange: this.randomRange,
+      timePercentage: this.timePercentage, // 新增时间百分比状态
+      countdownStartTime: this.countdownStartTime,
+      countdownDuration: this.countdownDuration,
+      loopCount: this.loopCount,
+      currentLoopCount: this.currentLoopCount,
+      lastSaved: Date.now()
+    };
+
+    try {
+      await browser.storage.local.set({ 'bilibiliScraperState': state });
+      console.log('[DEBUG] Background 状态已保存');
+    } catch (error) {
+      console.error('[ERROR] Background 保存状态异常:', error);
+    }
+  }
+
+  /**
+   * 从storage恢复状态 - 包含时间百分比
+   */
+  private async loadState(): Promise<void> {
+    try {
+      const result = await browser.storage.local.get(['bilibiliScraperState']);
+      if (result.bilibiliScraperState) {
+        const state = result.bilibiliScraperState;
+        this.videoData = state.videoData || [];
+        this.currentIndex = state.currentIndex || 0;
+        this.isLooping = state.isLooping || false;
+        this.randomRange = state.randomRange || 5;
+        this.timePercentage = state.timePercentage || 100; // 新增时间百分比状态恢复
+        this.countdownStartTime = state.countdownStartTime || 0;
+        this.countdownDuration = state.countdownDuration || 0;
+        this.loopCount = state.loopCount || 0;
+        this.currentLoopCount = state.currentLoopCount || 0;
+        console.log('[DEBUG] Background 恢复状态:', state);
+
+        // 重置倒计时相关状态（新逻辑不需要这些）
+        this.countdownTime = 0;
+        this.countdownStartTime = 0;
+        this.countdownDuration = 0;
+
+        // 如果之前正在循环，继续循环
+        if (this.isLooping && this.videoData.length > 0) {
+          console.log('[DEBUG] Background 检测到之前的循环状态，继续循环');
+          setTimeout(() => {
+            this.playVideo();
+          }, 1000);
+        }
+      }
+    } catch (error) {
+      console.error('[ERROR] Background 加载状态失败:', error);
+    }
   }
 
   /**
@@ -233,7 +333,7 @@ class LoopManager {
   }
 
   /**
-   * 检查视频播放进度
+   * 检查视频进度（增强版 - 包含弹窗检测和播放状态检测）
    */
   private async checkVideoProgress(): Promise<void> {
     console.log('[DEBUG] Background checkVideoProgress 被调用');
@@ -253,80 +353,56 @@ class LoopManager {
       const tabs = await browser.tabs.query({ active: true, currentWindow: true });
       if (tabs[0]) {
         console.log('[DEBUG] Background 发送消息到标签页:', tabs[0].id);
-        const response = await browser.tabs.sendMessage(tabs[0].id!, { type: 'REQUEST_CURRENT_VIDEO_INFO' });
         
-        console.log('[DEBUG] Background 收到响应:', response);
-
-        if (response && response.type === 'CURRENT_VIDEO_INFO' && response.data) {
-          const videoInfo = response.data;
-          const remainingSeconds = videoInfo.remainingSeconds || 0;
-          const currentTime = videoInfo.currentTime || 0;
-          const totalTime = videoInfo.totalTime || 0;
-
-          console.log(`[DEBUG] Background 视频信息: 当前时间=${currentTime}秒, 总时长=${totalTime}秒, 剩余时间=${remainingSeconds}秒`);
-
-          // 检查数据有效性
-          if (totalTime === 0) {
-            console.log('[DEBUG] Background 视频总时长为0，跳过检查');
-            return;
-          }
-
-          // 获取当前视频的指定播放时长
-          const currentVideo = this.videoData[this.currentIndex];
-          const specifiedPlayTime = currentVideo?.videoTime || 0;
+        // 1. 首先进行循环状态检测（包含弹窗检测和播放状态检测）
+        const loopingStateResponse = await browser.tabs.sendMessage(tabs[0].id!, { 
+          type: 'REQUEST_LOOPING_STATE_CHECK' 
+        });
+        
+        if (loopingStateResponse && loopingStateResponse.type === 'LOOPING_STATE_CHECK_RESULT') {
+          const stateData = loopingStateResponse.data;
           
-          // 新增判断：如果设置了指定播放时长，检查是否达到指定时长
-          if (specifiedPlayTime > 0) {
-            const remainingSpecifiedTime = specifiedPlayTime - currentTime;
-            console.log(`[DEBUG] Background 指定播放时长: ${specifiedPlayTime}秒, 剩余指定时长: ${remainingSpecifiedTime}秒`);
+          if (stateData) {
+            console.log('[DEBUG] Background 循环状态检测结果:', stateData);
             
-            if (remainingSpecifiedTime <= 0) {
-              console.log(`[DEBUG] Background 达到指定播放时长，直接跳转到下一个视频`);
+            // 处理弹窗关闭结果
+            if (stateData.modalClosed) {
+              console.log('[DEBUG] Background 检测到弹窗已被关闭');
+            }
+            
+            // 处理播放状态
+            if (stateData.playingStatus) {
+              const { isPlaying, isPaused } = stateData.playingStatus;
               
-              // 清除进度监控
-              if (this.progressInterval) {
-                clearInterval(this.progressInterval);
-                this.progressInterval = null;
+              if (isPaused && stateData.resumeAttempted) {
+                console.log('[DEBUG] Background 检测到视频暂停，已尝试恢复播放');
+                // 给恢复播放一些时间
+                await new Promise(resolve => setTimeout(resolve, 1000));
               }
               
-              // 跳转到下一个视频
-              this.moveToNextVideo();
-              return;
+              if (!isPlaying && !stateData.resumeAttempted) {
+                console.log('[DEBUG] Background 视频未在播放且未尝试恢复，跳过本次检查');
+                return;
+              }
+            }
+            
+            // 使用状态检测中获取的视频信息
+            if (stateData.videoInfo) {
+              await this.processVideoProgress(stateData.videoInfo);
             }
           }
-
-          // 计算随机等待时间，确保至少等待1秒
-          let randomWaitTime = 1; // 最小等待时间
-          if (this.randomRange > 0) {
-            randomWaitTime = Math.max(1, Math.floor(Math.random() * this.randomRange) + 1);
-          }
-
-          // 添加最短间隔保护：至少播放5秒
-          const minPlayTime = 5;
-          const actualRemainingTime = Math.max(remainingSeconds, minPlayTime);
-
-          console.log(`[DEBUG] Background 视频剩余时间: ${remainingSeconds}秒, 随机等待: ${randomWaitTime}秒, 实际剩余: ${actualRemainingTime}秒`);
-
-          // 判断是否应该跳转：实际剩余时间 - 随机等待时间 <= 0
-          if (actualRemainingTime - randomWaitTime <= 0) {
-            console.log(`[DEBUG] Background 视频即将结束，准备跳转到下一个视频`);
-
-            // 清除进度监控
-            if (this.progressInterval) {
-              clearInterval(this.progressInterval);
-              this.progressInterval = null;
-            }
-
-            // 跳转到下一个视频 - 使用while循环逻辑
-            this.moveToNextVideo();
-          } else {
-            // 更新倒计时显示
-            this.countdownTime = Math.max(0, actualRemainingTime - randomWaitTime);
-            this.saveState();
-          }
-        } else {
-          console.log('[DEBUG] Background 未收到有效的视频信息');
         }
+        
+        // 2. 如果循环状态检测失败，回退到原有的视频信息获取方式
+        if (!loopingStateResponse || !loopingStateResponse.data || !loopingStateResponse.data.videoInfo) {
+          console.log('[DEBUG] Background 循环状态检测失败，使用备用方法获取视频信息');
+          const response = await browser.tabs.sendMessage(tabs[0].id!, { type: 'REQUEST_CURRENT_VIDEO_INFO' });
+          
+          if (response && response.type === 'CURRENT_VIDEO_INFO' && response.data) {
+            await this.processVideoProgress(response.data);
+          }
+        }
+        
       } else {
         console.log('[DEBUG] Background 未找到活动标签页');
       }
@@ -386,83 +462,6 @@ class LoopManager {
     if (this.progressInterval) {
       clearInterval(this.progressInterval);
       this.progressInterval = null;
-    }
-  }
-
-  /**
-   * 获取当前状态
-   */
-  private getState(): any {
-    return {
-      videoData: this.videoData,
-      currentIndex: this.currentIndex,
-      isLooping: this.isLooping,
-      countdownTime: this.countdownTime,
-      countdownStartTime: this.countdownStartTime,
-      countdownDuration: this.countdownDuration,
-      randomRange: this.randomRange,
-      loopCount: this.loopCount,
-      currentLoopCount: this.currentLoopCount
-    };
-  }
-
-  /**
-   * 保存状态到storage
-   */
-  private async saveState(): Promise<void> {
-    const state = {
-      videoData: this.videoData,
-      currentIndex: this.currentIndex,
-      isLooping: this.isLooping,
-      randomRange: this.randomRange,
-      countdownStartTime: this.countdownStartTime,
-      countdownDuration: this.countdownDuration,
-      loopCount: this.loopCount,
-      currentLoopCount: this.currentLoopCount,
-      lastSaved: Date.now()
-    };
-
-    try {
-      await browser.storage.local.set({ 'bilibiliScraperState': state });
-      console.log('[DEBUG] Background 状态已保存');
-    } catch (error) {
-      console.error('[ERROR] Background 保存状态异常:', error);
-    }
-  }
-
-  /**
-   * 从storage恢复状态
-   */
-  private async loadState(): Promise<void> {
-    try {
-      const result = await browser.storage.local.get(['bilibiliScraperState']);
-      if (result.bilibiliScraperState) {
-        const state = result.bilibiliScraperState;
-        this.videoData = state.videoData || [];
-        this.currentIndex = state.currentIndex || 0;
-        this.isLooping = state.isLooping || false;
-        this.randomRange = state.randomRange || 5;
-        this.countdownStartTime = state.countdownStartTime || 0;
-        this.countdownDuration = state.countdownDuration || 0;
-        this.loopCount = state.loopCount || 0;
-        this.currentLoopCount = state.currentLoopCount || 0;
-        console.log('[DEBUG] Background 恢复状态:', state);
-
-        // 重置倒计时相关状态（新逻辑不需要这些）
-        this.countdownTime = 0;
-        this.countdownStartTime = 0;
-        this.countdownDuration = 0;
-
-        // 如果之前正在循环，继续循环
-        if (this.isLooping && this.videoData.length > 0) {
-          console.log('[DEBUG] Background 检测到之前的循环状态，继续循环');
-          setTimeout(() => {
-            this.playVideo();
-          }, 1000);
-        }
-      }
-    } catch (error) {
-      console.error('[ERROR] Background 加载状态失败:', error);
     }
   }
 }

@@ -3,6 +3,7 @@ import { defineConfig } from 'wxt';
 // WXT配置文件 - 定义扩展权限和设置
 export default defineConfig({
   modules: ['@wxt-dev/module-vue'],
+  // 移除错误的vite配置，WXT会自动处理PostCSS
   manifest: {
     permissions: [
       'activeTab',

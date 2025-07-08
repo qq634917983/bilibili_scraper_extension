@@ -11,6 +11,12 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
   }
   class VideoDataScraper {
     constructor() {
+      // 添加防抖相关属性
+      __publicField(this, "lastResumeAttempt", 0);
+      __publicField(this, "resumeAttemptCooldown", 3e3);
+      // 3秒冷却时间
+      __publicField(this, "consecutiveResumeAttempts", 0);
+      __publicField(this, "maxConsecutiveAttempts", 3);
       this.init();
     }
     /**
@@ -19,6 +25,146 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     init() {
       this.setupMessageListener();
       console.log("[DEBUG] Content script 初始化完成");
+    }
+    /**
+     * 检测并关闭登录弹窗
+     */
+    checkAndCloseLoginModal() {
+      try {
+        const loginModal = document.querySelector(".bili-mini-mask");
+        if (loginModal) {
+          console.log("[DEBUG] Content script 检测到登录弹窗");
+          const closeButton = loginModal.querySelector(".bili-mini-close-icon");
+          if (closeButton) {
+            closeButton.click();
+            console.log("[DEBUG] Content script 已关闭登录弹窗");
+            return true;
+          }
+          const mask = loginModal.querySelector(".bili-mini-mask");
+          if (mask) {
+            mask.click();
+            console.log("[DEBUG] Content script 通过遮罩层关闭登录弹窗");
+            return true;
+          }
+        }
+        return false;
+      } catch (error) {
+        console.error("[ERROR] Content script 关闭登录弹窗失败:", error);
+        return false;
+      }
+    }
+    /**
+     * 检测视频播放状态
+     */
+    checkVideoPlayingStatus() {
+      try {
+        const playButton = document.querySelector(".bpx-player-ctrl-play");
+        const pauseButton = document.querySelector(".bpx-player-ctrl-pause");
+        const videoElement = document.querySelector("video");
+        let isPlaying = false;
+        let isPaused = false;
+        if (videoElement) {
+          isPlaying = !videoElement.paused && !videoElement.ended && videoElement.readyState > 2;
+          isPaused = videoElement.paused;
+        }
+        if (pauseButton && pauseButton.style.display !== "none") {
+          isPlaying = true;
+          isPaused = false;
+        } else if (playButton && playButton.style.display !== "none") {
+          isPlaying = false;
+          isPaused = true;
+        }
+        console.log(`[DEBUG] Content script 播放状态: isPlaying=${isPlaying}, isPaused=${isPaused}`);
+        return { isPlaying, isPaused };
+      } catch (error) {
+        console.error("[ERROR] Content script 检测播放状态失败:", error);
+        return { isPlaying: false, isPaused: false };
+      }
+    }
+    /**
+     * 恢复视频播放（增强版 - 添加防抖机制）
+     */
+    resumeVideoPlayback() {
+      try {
+        const now = Date.now();
+        if (now - this.lastResumeAttempt < this.resumeAttemptCooldown) {
+          console.log("[DEBUG] Content script 恢复播放冷却中，跳过本次尝试");
+          return false;
+        }
+        if (this.consecutiveResumeAttempts >= this.maxConsecutiveAttempts) {
+          console.log("[DEBUG] Content script 连续恢复播放次数过多，暂停尝试");
+          this.consecutiveResumeAttempts = 0;
+          this.lastResumeAttempt = now + this.resumeAttemptCooldown;
+          return false;
+        }
+        const videoElement = document.querySelector("video");
+        const playButton = document.querySelector(".bpx-player-ctrl-play");
+        if (videoElement) {
+          if (!videoElement.paused && !videoElement.ended) {
+            console.log("[DEBUG] Content script 视频已在播放，无需恢复");
+            this.consecutiveResumeAttempts = 0;
+            return false;
+          }
+          if (videoElement.paused) {
+            videoElement.play().then(() => {
+              console.log("[DEBUG] Content script 通过video元素恢复播放成功");
+              this.lastResumeAttempt = now;
+              this.consecutiveResumeAttempts++;
+            }).catch((error) => {
+              console.error("[ERROR] Content script video.play()失败:", error);
+            });
+            return true;
+          }
+        }
+        if (playButton && playButton.style.display !== "none") {
+          playButton.click();
+          console.log("[DEBUG] Content script 通过播放按钮恢复播放");
+          this.lastResumeAttempt = now;
+          this.consecutiveResumeAttempts++;
+          return true;
+        }
+        return false;
+      } catch (error) {
+        console.error("[ERROR] Content script 恢复播放失败:", error);
+        return false;
+      }
+    }
+    /**
+     * 循环播放时的状态检测和处理（优化版）
+     */
+    handleLoopingStateCheck() {
+      try {
+        const modalClosed = this.checkAndCloseLoginModal();
+        const playingStatus = this.checkVideoPlayingStatus();
+        let resumeAttempted = false;
+        if (playingStatus.isPaused) {
+          const now = Date.now();
+          const shouldAttemptResume = now - this.lastResumeAttempt >= this.resumeAttemptCooldown && this.consecutiveResumeAttempts < this.maxConsecutiveAttempts;
+          if (shouldAttemptResume) {
+            resumeAttempted = this.resumeVideoPlayback();
+          } else {
+            console.log("[DEBUG] Content script 跳过恢复播放（防抖保护）");
+          }
+        } else if (playingStatus.isPlaying) {
+          this.consecutiveResumeAttempts = 0;
+        }
+        const currentVideoInfo = this.getCurrentVideoInfo();
+        return {
+          modalClosed,
+          playingStatus,
+          resumeAttempted,
+          videoInfo: currentVideoInfo,
+          timestamp: Date.now(),
+          resumeStats: {
+            lastAttempt: this.lastResumeAttempt,
+            consecutiveAttempts: this.consecutiveResumeAttempts,
+            cooldownRemaining: Math.max(0, this.resumeAttemptCooldown - (Date.now() - this.lastResumeAttempt))
+          }
+        };
+      } catch (error) {
+        console.error("[ERROR] Content script 循环状态检测失败:", error);
+        return null;
+      }
     }
     /**
      * 设置消息监听器
@@ -49,24 +195,48 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
           });
           return true;
         }
+        if (message.type === "REQUEST_LOOPING_STATE_CHECK") {
+          const stateInfo = this.handleLoopingStateCheck();
+          sendResponse({
+            type: "LOOPING_STATE_CHECK_RESULT",
+            data: stateInfo
+          });
+          return true;
+        }
       });
     }
     /**
-     * 抓取视频数据
+     * 抓取视频数据（增强版）
      */
     async scrapeVideoData() {
-      console.log("[DEBUG] Content script 开始抓取视频数据");
+      console.log("[DEBUG] ========== 开始抓取视频数据 ==========");
       if (!window.location.hostname.includes("bilibili.com")) {
         throw new Error("请在Bilibili视频页面上使用此扩展");
       }
       await this.waitForPageLoad();
-      const videoInfo = this.getVideoInfo();
-      if (!videoInfo) {
-        throw new Error("无法获取视频信息");
+      const currentVideoInfo = this.getVideoInfo();
+      if (!currentVideoInfo) {
+        throw new Error("无法获取当前视频信息");
       }
       const playlist = await this.getPlaylist();
-      const allVideos = [videoInfo, ...playlist];
-      console.log(`[DEBUG] Content script 抓取完成，共 ${allVideos.length} 个视频`);
+      const filteredPlaylist = playlist.filter((video) => video.id !== currentVideoInfo.id);
+      console.log(`[DEBUG] 过滤重复项后，播放列表剩余 ${filteredPlaylist.length} 个视频`);
+      filteredPlaylist.forEach((video, index) => {
+        video.originalIndex = index + 2;
+      });
+      currentVideoInfo.originalIndex = 1;
+      const allVideos = [currentVideoInfo, ...filteredPlaylist];
+      console.log(`[DEBUG] ========== 最终视频数据汇总 ==========`);
+      console.log(`[DEBUG] 总共获取到 ${allVideos.length} 个视频`);
+      console.table(allVideos.map((video) => ({
+        "原始序号": video.originalIndex,
+        "视频ID": video.id,
+        "视频名称": video.name.length > 30 ? video.name.substring(0, 30) + "..." : video.name,
+        "时长": video.duration,
+        "状态": video.status,
+        "播放时长": video.playedTime + "秒"
+      })));
+      console.log("[DEBUG] ========== 视频数据抓取完成 ==========");
       return allVideos;
     }
     /**
@@ -82,13 +252,15 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       });
     }
     /**
-     * 获取当前视频信息
+     * 获取当前视频信息（增强版）
      */
     getVideoInfo() {
-      var _a2, _b2;
+      var _a2, _b2, _c;
       try {
+        console.log("[DEBUG] ========== 获取当前视频信息 ==========");
         const titleElement = document.querySelector("h1.video-title") || document.querySelector(".video-info-title") || document.querySelector("title");
         const title = titleElement ? (_a2 = titleElement.textContent) == null ? void 0 : _a2.trim() : "未知视频";
+        console.log(`[DEBUG] 当前视频标题: ${title}`);
         const url = window.location.href;
         const bvMatch = url.match(/BV\w+/);
         const avMatch = url.match(/av(\d+)/);
@@ -100,158 +272,180 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         } else {
           videoId = "unknown";
         }
-        const durationElement = document.querySelector(".duration") || document.querySelector(".bpx-player-ctrl-time-duration");
+        console.log(`[DEBUG] 当前视频ID: ${videoId}`);
+        const durationElement = document.querySelector(".bpx-player-ctrl-time-duration");
         let duration = 0;
+        let durationText = "";
         if (durationElement) {
-          const durationText = (_b2 = durationElement.textContent) == null ? void 0 : _b2.trim();
-          duration = this.parseDuration(durationText || "");
+          durationText = ((_b2 = durationElement.textContent) == null ? void 0 : _b2.trim()) || "";
+          duration = this.parseDuration(durationText);
         }
-        return {
+        console.log(`[DEBUG] 当前视频时长: ${durationText} (${duration}秒)`);
+        const currentTimeElement = document.querySelector(".bpx-player-ctrl-time-current");
+        let currentTime = 0;
+        let currentTimeText = "";
+        if (currentTimeElement) {
+          currentTimeText = ((_c = currentTimeElement.textContent) == null ? void 0 : _c.trim()) || "";
+          currentTime = this.parseDuration(currentTimeText);
+        }
+        console.log(`[DEBUG] 当前播放时间: ${currentTimeText} (${currentTime}秒)`);
+        const videoData = {
+          originalIndex: 0,
+          // 当前视频的原始序号设为0
           id: videoId,
+          // 视频ID
           name: title,
+          // 视频名称
+          duration: durationText,
+          // 时长（原始文本）
+          durationSeconds: duration,
+          // 时长（秒数）
+          status: "current",
+          // 状态：当前播放
+          playedTime: currentTime,
+          // 播放时长（秒）
           url,
+          // 视频URL
           stayTime: duration * 1e3
-          // 转换为毫秒
+          // 停留时间（毫秒）
         };
+        console.log("[DEBUG] 当前视频完整数据:", {
+          "原始序号": videoData.originalIndex,
+          "视频ID": videoData.id,
+          "视频名称": videoData.name,
+          "时长": videoData.duration,
+          "时长秒数": videoData.durationSeconds,
+          "状态": videoData.status,
+          "播放时长": videoData.playedTime,
+          "URL": videoData.url
+        });
+        return videoData;
       } catch (error) {
         console.error("[ERROR] 获取当前视频信息失败:", error);
         return null;
       }
     }
     /**
-     * 获取播放列表
+     * 获取播放列表（根据真实HTML结构优化）
      */
     async getPlaylist() {
-      var _a2, _b2;
+      var _a2, _b2, _c;
       try {
         const playlist = [];
-        const playlistSelectors = [
-          ".video-pod__item",
-          // 新版播放列表
-          ".pod-item",
-          // 新版播放列表项
-          ".list-item",
-          // 旧版播放列表
-          ".ep-item",
-          // 番剧播放列表
-          ".episode-item"
-          // 其他播放列表格式
-        ];
-        let playlistElements = null;
-        for (const selector of playlistSelectors) {
-          const elements = document.querySelectorAll(selector);
-          if (elements.length > 0) {
-            playlistElements = elements;
-            console.log(`[DEBUG] 使用选择器 "${selector}" 找到 ${elements.length} 个播放列表项`);
-            break;
-          }
-        }
-        if (!playlistElements || playlistElements.length === 0) {
-          console.log("[DEBUG] 未找到播放列表元素，尝试其他方法");
-          const bvElements = document.querySelectorAll('[data-key*="BV"]');
-          if (bvElements.length > 0) {
-            playlistElements = bvElements;
-            console.log(`[DEBUG] 通过BV号找到 ${bvElements.length} 个视频元素`);
-          }
-        }
-        if (!playlistElements || playlistElements.length === 0) {
-          console.log("[DEBUG] 未找到播放列表元素");
+        console.log("[DEBUG] ========== 开始获取播放列表数据 ==========");
+        const playlistContainer = document.querySelector(".video-pod__list.section");
+        if (!playlistContainer) {
+          console.log("[DEBUG] 未找到播放列表容器 .video-pod__list.section");
           return playlist;
         }
-        console.log(`[DEBUG] 开始解析 ${playlistElements.length} 个播放列表项`);
+        const playlistElements = playlistContainer.querySelectorAll(".pod-item.video-pod__item");
+        console.log(`[DEBUG] 找到 ${playlistElements.length} 个播放列表项`);
+        if (playlistElements.length === 0) {
+          console.log("[DEBUG] 播放列表为空");
+          return playlist;
+        }
         for (let i = 0; i < playlistElements.length; i++) {
           const element = playlistElements[i];
           try {
-            let videoId = element.getAttribute("data-key") || "";
+            console.log(`[DEBUG] ========== 解析第 ${i + 1} 个视频 ==========`);
+            const originalIndex = i + 1;
+            console.log(`[DEBUG] 原始序号: ${originalIndex}`);
+            const videoId = element.getAttribute("data-key") || "";
+            console.log(`[DEBUG] 视频ID: ${videoId}`);
             if (!videoId) {
-              const linkElement = element.querySelector("a");
-              if (linkElement && linkElement.href) {
-                const url2 = linkElement.href;
-                const bvMatch = url2.match(/BV\w+/);
-                const avMatch = url2.match(/av(\d+)/);
-                if (bvMatch) {
-                  videoId = bvMatch[0];
-                } else if (avMatch) {
-                  videoId = `av${avMatch[1]}`;
-                }
-              }
-            }
-            if (!videoId) {
-              videoId = `video_${i + 1}`;
-            }
-            const titleSelectors = [
-              ".title-txt",
-              // 新版标题
-              ".title",
-              // 通用标题
-              ".ep-title",
-              // 番剧标题
-              ".episode-title",
-              // 其他标题
-              "a[title]"
-              // 链接的title属性
-            ];
-            let title = "";
-            for (const selector of titleSelectors) {
-              const titleElement = element.querySelector(selector);
-              if (titleElement) {
-                title = ((_a2 = titleElement.textContent) == null ? void 0 : _a2.trim()) || titleElement.getAttribute("title") || "";
-                if (title) break;
-              }
-            }
-            if (!title) {
-              title = `视频 ${i + 1}`;
-            }
-            const durationSelectors = [
-              ".duration",
-              // 新版时长
-              ".stat-item.duration",
-              // 新版时长（带类名）
-              ".ep-duration",
-              // 番剧时长
-              ".time",
-              // 通用时长
-              '[class*="duration"]'
-              // 包含duration的类名
-            ];
-            let duration = 0;
-            for (const selector of durationSelectors) {
-              const durationElement = element.querySelector(selector);
-              if (durationElement) {
-                const durationText = (_b2 = durationElement.textContent) == null ? void 0 : _b2.trim();
-                duration = this.parseDuration(durationText || "");
-                if (duration > 0) break;
-              }
-            }
-            let url = "";
-            if (videoId.startsWith("BV")) {
-              url = `https://www.bilibili.com/video/${videoId}`;
-            } else if (videoId.startsWith("av")) {
-              url = `https://www.bilibili.com/video/${videoId}`;
-            } else {
-              const linkElement = element.querySelector("a");
-              if (linkElement && linkElement.href) {
-                url = linkElement.href;
-              }
-            }
-            if (!url) {
-              console.log(`[DEBUG] 跳过第 ${i + 1} 个项目：无法获取URL`);
+              console.log(`[DEBUG] 第 ${originalIndex} 个视频缺少data-key属性，跳过`);
               continue;
             }
-            playlist.push({
+            const titleElement = element.querySelector(".title-txt");
+            const videoName = titleElement ? ((_a2 = titleElement.textContent) == null ? void 0 : _a2.trim()) || "" : "";
+            console.log(`[DEBUG] 视频名称: ${videoName}`);
+            if (!videoName) {
+              console.log(`[DEBUG] 第 ${originalIndex} 个视频缺少标题，跳过`);
+              continue;
+            }
+            const durationElement = element.querySelector(".stat-item.duration");
+            let durationText = "";
+            let durationSeconds = 0;
+            if (durationElement) {
+              durationText = ((_b2 = durationElement.textContent) == null ? void 0 : _b2.trim()) || "";
+              durationSeconds = this.parseDuration(durationText);
+            }
+            console.log(`[DEBUG] 时长文本: "${durationText}", 解析后秒数: ${durationSeconds}`);
+            let status = "normal";
+            const baseItem = element.querySelector(".simple-base-item");
+            if (baseItem) {
+              if (baseItem.classList.contains("active")) {
+                status = "playing";
+              } else if (baseItem.classList.contains("watched")) {
+                status = "watched";
+              }
+            }
+            const playingGif = element.querySelector(".playing-gif");
+            if (playingGif) {
+              const gifDisplay = window.getComputedStyle(playingGif).display;
+              if (gifDisplay !== "none") {
+                status = "playing";
+              }
+            }
+            console.log(`[DEBUG] 视频状态: ${status}`);
+            let playedTime = 0;
+            if (status === "playing") {
+              const currentTimeElement = document.querySelector(".bpx-player-ctrl-time-current");
+              if (currentTimeElement) {
+                const currentTimeText = ((_c = currentTimeElement.textContent) == null ? void 0 : _c.trim()) || "";
+                playedTime = this.parseDuration(currentTimeText);
+              }
+            }
+            console.log(`[DEBUG] 播放时长: ${playedTime}秒`);
+            const videoUrl = `https://www.bilibili.com/video/${videoId}`;
+            console.log(`[DEBUG] 视频URL: ${videoUrl}`);
+            const videoData = {
+              originalIndex,
+              // 原始序号
               id: videoId,
-              name: title,
-              url,
-              stayTime: duration * 1e3
-              // 转换为毫秒
+              // 视频ID
+              name: videoName,
+              // 视频名称
+              duration: durationText,
+              // 时长（原始文本）
+              durationSeconds,
+              // 时长（秒数）
+              status,
+              // 状态
+              playedTime,
+              // 播放时长（秒）
+              url: videoUrl,
+              // 视频URL
+              stayTime: durationSeconds * 1e3
+              // 停留时间（毫秒，兼容原有逻辑）
+            };
+            playlist.push(videoData);
+            console.log(`[DEBUG] 第 ${originalIndex} 个视频数据:`, {
+              "原始序号": videoData.originalIndex,
+              "视频ID": videoData.id,
+              "视频名称": videoData.name,
+              "时长": videoData.duration,
+              "时长秒数": videoData.durationSeconds,
+              "状态": videoData.status,
+              "播放时长": videoData.playedTime,
+              "URL": videoData.url
             });
-            console.log(`[DEBUG] 解析第 ${i + 1} 个视频: ${videoId} - ${title}`);
           } catch (error) {
-            console.error(`[ERROR] 处理播放列表项 ${i + 1} 时出错:`, error);
+            console.error(`[ERROR] 处理第 ${i + 1} 个播放列表项时出错:`, error);
             continue;
           }
         }
-        console.log(`[DEBUG] 成功解析 ${playlist.length} 个播放列表项`);
+        console.log(`[DEBUG] ========== 播放列表解析完成 ==========`);
+        console.log(`[DEBUG] 总共解析了 ${playlist.length} 个有效视频`);
+        console.log("[DEBUG] 最终播放列表数据:", playlist.map((video, index) => ({
+          序号: index + 1,
+          原始序号: video.originalIndex,
+          视频ID: video.id,
+          视频名称: video.name,
+          时长: video.duration,
+          状态: video.status,
+          播放时长: video.playedTime + "秒"
+        })));
         return playlist;
       } catch (error) {
         console.error("[ERROR] 获取播放列表失败:", error);
